@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 btleplug = "*"
 tokio = {version="*", features=["full"]}
+tokio-stream = "*"

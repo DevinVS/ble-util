@@ -1,6 +1,8 @@
-use std::{env::args, time::Duration, io::{stdin, Read}};
+use std::env::args;
+use std::time::Duration;
+use std::io::stdin;
 
-use btleplug::{platform::Manager, api::{Manager as _, ScanFilter, Central, Peripheral, Characteristic, WriteType}};
+use btleplug::{platform::Manager, api::{Manager as _, ScanFilter, Central, Peripheral, WriteType}};
 use tokio::time;
 use std::error::Error;
 
@@ -14,9 +16,12 @@ Commands:
     scan                scan for and print nearby devices
     ping <addr>         connect to device and print its services and characteristics
     read <addr> <char>  connect to the device and read the value of the characteristic
-    write <addr> <char> connect to the device and write a value to the characteristic via stdin
+    write <addr>        connect to the device and write a value to the characteristic via stdin
     help                print this help message
 "###;
+
+static CHAR_WRITE: &'static str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+static CHAR_READ: &'static str = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -61,16 +66,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
 
-            if args.get(3).is_none() {
-                eprintln!("No characteristic uuid specified\n");
-                help();
-                return Ok(());
-            }
-
-            let mut input = String::new();
-            stdin().read_to_string(&mut input).unwrap();
-
-            write(&args[2], &args[3], &input).await?;
+            write(&args[2]).await?;
         },
         "help" => help(),
         _ => {
@@ -172,13 +168,13 @@ async fn read(addr: &str, char_id: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn write(addr: &str, char_id: &str, msg: &str) -> Result<(), Box<dyn Error>> {
+async fn write(addr: &str) -> Result<(), Box<dyn Error>> {
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
     let central = adapters.into_iter().nth(0).unwrap();
 
     central.start_scan(ScanFilter::default()).await?;
-    time::sleep(Duration::from_secs(3)).await;
+    time::sleep(Duration::from_secs(2)).await;
 
     let mut dev = None;
     for p in central.peripherals().await? {
@@ -193,21 +189,33 @@ async fn write(addr: &str, char_id: &str, msg: &str) -> Result<(), Box<dyn Error
     }
 
     let dev = dev.unwrap();
+
     dev.connect().await?;
 
     println!("Connected");
     dev.discover_services().await?;
 
     let chars = dev.characteristics();
-    let ch = chars.iter()
-        .find(|a| a.uuid.to_string().eq(char_id))
+    let ch_write = chars.iter()
+        .find(|a| a.uuid.to_string().eq(CHAR_WRITE))
         .unwrap();
 
-    dev.write(ch, msg.as_bytes(), WriteType::WithoutResponse).await?;
+    let ch_read = chars.iter()
+        .find(|a| a.uuid.to_string().eq(CHAR_READ))
+        .unwrap();
+
+    let mut buf = String::new();
+    while let Ok(_) = stdin().read_line(&mut buf) {
+        let res = dev.write(ch_write, buf.trim().as_bytes(), WriteType::WithoutResponse).await?;
+        println!("{:?}", res);
+
+        let res = dev.read(ch_read).await?;
+        println!("{:?}", res);
+    }
+
 
     Ok(())
 }
-
 
 fn help() {
     eprintln!("{}", HELP_MSG);
